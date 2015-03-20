@@ -18,6 +18,40 @@ type ViewServer struct {
 
 
 	// Your declarations here.
+	view     View //current view
+	primaryAck  uint
+	backupAck   uint
+	primaryTick uint
+	backupTick  uint
+	currentTick uint
+}
+
+func (vs *ViewServer) initPrimary() {
+    vs.view.Primary = ""
+    vs.primaryAck = 0
+    vs.primaryTick = 0
+}
+
+func (vs *ViewServer) initBackup() {
+    vs.view.Backup = ""
+    vs.backupAck = 0
+    vs.backupTick = 0
+}
+
+func (vs *ViewServer) ChangePrimary() {
+    if (vs.view.Backup == "") {
+        vs.initPrimary()
+        return;
+    }
+    vs.view.Primary = vs.view.Backup
+    vs.primaryAck = vs.backupAck
+    vs.primaryTick = vs.backupTick
+    vs.initBackup()
+    vs.view.Viewnum ++
+}
+
+func (vs *ViewServer) isAcked() bool {
+    return vs.view.Viewnum == vs.primaryAck
 }
 
 //
@@ -26,7 +60,40 @@ type ViewServer struct {
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
 	// Your code here.
-
+	name := args.Me
+    num := args.Viewnum
+    vs.mu.Lock()
+    if vs.view.Primary == "" && vs.view.Viewnum == 0 { //new primary
+        vs.view.Primary = name
+        vs.primaryAck = num
+        vs.primaryTick = vs.currentTick
+        vs.view.Viewnum ++
+    } else if name == vs.view.Primary { //ping from primary
+        if num == 0 { //primary restart
+            vs.ChangePrimary() 
+        } else {
+            vs.primaryAck = num
+            vs.primaryTick = vs.currentTick
+        }
+    } else if vs.view.Backup == "" && vs.isAcked() { //new backup 
+        vs.view.Backup = name
+        vs.backupAck = num
+        vs.backupTick = vs.currentTick
+        vs.view.Viewnum++
+    } else if name == vs.view.Backup { //ping from backup
+        if num == 0 { //backup restart
+            if vs.isAcked() {
+                vs.view.Viewnum++
+                vs.backupAck = num
+                vs.backupTick = vs.currentTick
+            }
+        } else {
+            vs.backupAck = num
+            vs.backupTick = vs.currentTick
+        }    
+    }
+    reply.View = vs.view
+    vs.mu.Unlock()
 	return nil
 }
 
@@ -36,7 +103,9 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 
 	// Your code here.
-
+    vs.mu.Lock()
+    reply.View = vs.view
+    vs.mu.Unlock()
 	return nil
 }
 
@@ -47,8 +116,18 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 // accordingly.
 //
 func (vs *ViewServer) tick() {
-
+    
 	// Your code here.
+	vs.mu.Lock()
+	vs.currentTick++
+	if vs.view.Primary != "" && vs.currentTick - vs.primaryTick  >= DeadPings && vs.isAcked() {
+	    vs.ChangePrimary()
+	}
+	if vs.view.Backup != "" && vs.currentTick - vs.backupTick >= DeadPings && vs.isAcked() {
+	    vs.initBackup()
+	    vs.view.Viewnum++
+	}
+	vs.mu.Unlock()
 }
 
 //
@@ -77,7 +156,10 @@ func StartServer(me string) *ViewServer {
 	vs := new(ViewServer)
 	vs.me = me
 	// Your vs.* initializations here.
-
+    vs.view.Viewnum = 0
+    vs.initPrimary()
+    vs.initBackup()
+    
 	// tell net/rpc about our RPC server and handlers.
 	rpcs := rpc.NewServer()
 	rpcs.Register(vs)
