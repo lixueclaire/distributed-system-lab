@@ -70,10 +70,12 @@ func call(srv string, rpcname string,
 	return false
 }
 
+//update the view
+
 func (ck *Clerk) Update() {
     view, err := ck.vs.Ping(ck.view.Viewnum)
     if err != nil {
-        //fmt.Println("Client update fail")
+        fmt.Println("Client update fail")
         return
     }
     ck.view = view
@@ -96,7 +98,6 @@ func (ck *Clerk) Get(key string) string {
     var reply GetReply
     for {
         ok := call(ck.view.Primary, "PBServer.Get", args, &reply)
-        //fmt.Println(ck.view.Primary, "dfd", ck.view.Backup, key, reply.Value, ok)
         if ok {
             return reply.Value
         }
@@ -122,7 +123,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	    if ok {
 	        return 
 	    }
-	    //fmt.Println(ck.view.Primary, ck.view.Backup, key, value, ok)
 	    time.Sleep(viewservice.PingInterval)
 	    ck.Update()
 	}

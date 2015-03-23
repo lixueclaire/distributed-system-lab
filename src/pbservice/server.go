@@ -43,6 +43,8 @@ func (pb *PBServer) hasBackup() bool {
     return pb.view.Backup != ""
 }
 
+//forward to backup
+
 func (pb *PBServer) Forward(args *ForwardArgs) error{
     if !pb.hasBackup() {
         return nil
@@ -50,10 +52,12 @@ func (pb *PBServer) Forward(args *ForwardArgs) error{
     var reply ForwardReply
     ok := call(pb.view.Backup, "PBServer.ReplyForwardCall", args, &reply)
     if !ok {
-       // return errors.New("Forward failed")
+       return errors.New("Forward failed")
     }
     return nil
 }
+
+//reply to a forward request
 
 func (pb *PBServer) ReplyForwardCall(args *ForwardArgs, reply *ForwardReply) error {
     pb.mu.Lock()
@@ -90,18 +94,17 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
     if !pb.isPrimary() {
         reply.Err = ErrWrongServer
         pb.mu.Unlock()
-        //fmt.Println(args)
         return errors.New("it's not primary, but received Put")
     }
     key, value, client, id:= args.Key, args.Value, args.Me, args.Id
-    if pb.content["seen." + client] == id {
+    if pb.content["last operation of " + client] == id {
         pb.mu.Unlock()
         return nil
     }
     if (args.Op == "Append") {
         value = pb.content[key] + value
     }
-    forwardargs := &ForwardArgs{map[string] string{key: value, "seen." + client: id}}
+    forwardargs := &ForwardArgs{map[string] string{key: value, "last operation of " + client: id}}
     err := pb.Forward(forwardargs)
     if err != nil {
         pb.mu.Unlock()
@@ -127,8 +130,7 @@ func (pb *PBServer) tick() {
 	pb.mu.Lock()
 	view, error := pb.vs.Ping(pb.view.Viewnum)
 	if error != nil {
-       // fmt.Println("Ping view server fail")
-       // return 
+       // do nothing
 	}
 	var needforward = false
 	if pb.isPrimary() && view.Backup != "" && pb.view.Backup != view.Backup {
