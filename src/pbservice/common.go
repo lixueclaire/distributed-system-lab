@@ -36,6 +36,9 @@ type GetReply struct {
 
 type ForwardArgs struct {
     Content map[string] string 
+    Client string
+    Id string
+    Op string
 }
 
 type ForwardReply struct {

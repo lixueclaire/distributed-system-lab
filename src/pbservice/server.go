@@ -25,6 +25,7 @@ type PBServer struct {
 	// Your declarations here.
 	view       viewservice.View
 	content    map[string] string
+    forward    bool
 }
 
 func (pb *PBServer) isPrimary() bool {
@@ -42,10 +43,10 @@ func (pb *PBServer) hasPrimary() bool {
 func (pb *PBServer) hasBackup() bool {
     return pb.view.Backup != ""
 }
-
+    
 //forward to backup
 
-func (pb *PBServer) Forward(args *ForwardArgs) error{
+func (pb *PBServer) ForwardAll(args *ForwardArgs) error{
     if !pb.hasBackup() {
         return nil
     }
@@ -53,6 +54,18 @@ func (pb *PBServer) Forward(args *ForwardArgs) error{
     ok := call(pb.view.Backup, "PBServer.ReplyForwardCall", args, &reply)
     if !ok {
        return errors.New("Forward failed")
+    }
+    return nil
+}
+    
+func (pb *PBServer) Forward(args *ForwardArgs) error{
+    if !pb.hasBackup() || pb.forward == true {
+        return nil
+    }
+    var reply ForwardReply
+    ok := call(pb.view.Backup, "PBServer.ReplyForwardCall", args, &reply)
+    if !ok {
+        return errors.New("Forward failed")
     }
     return nil
 }
@@ -66,11 +79,22 @@ func (pb *PBServer) ReplyForwardCall(args *ForwardArgs, reply *ForwardReply) err
         return errors.New("it's not backup")
     }
     for key, value := range args.Content {
-        pb.content[key] = value
+        if args.Op == "Append" {
+            if args.Client != "" && pb.content[args.Client] != args.Id {
+                pb.content[key] += value
+            }
+        } else {
+            pb.content[key] = value
+        }
+    }
+    if args.Client != "" {
+        pb.content[args.Client] = args.Id
     }
     pb.mu.Unlock()
     return nil
 }
+    
+    
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 
@@ -96,23 +120,23 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
         pb.mu.Unlock()
         return errors.New("it's not primary, but received Put")
     }
-    key, value, client, id:= args.Key, args.Value, args.Me, args.Id
+    key, value, client, id, op:= args.Key, args.Value, args.Me, args.Id, args.Op
     if pb.content["last operation of " + client] == id {
         pb.mu.Unlock()
         return nil
     }
-    if (args.Op == "Append") {
-        value = pb.content[key] + value
-    }
-    forwardargs := &ForwardArgs{map[string] string{key: value, "last operation of " + client: id}}
+    forwardargs := &ForwardArgs{map[string] string{key: value}, "last operation of " + client, id, op}
     err := pb.Forward(forwardargs)
     if err != nil {
         pb.mu.Unlock()
         return errors.New("Forward failed")
     }
-    for key, value := range forwardargs.Content {
+    if (args.Op == "Append") {
+        pb.content[key] += value
+    } else {
         pb.content[key] = value
     }
+    pb.content["last operation of " + client] = id
     pb.mu.Unlock()
 	return nil
 }
@@ -132,13 +156,20 @@ func (pb *PBServer) tick() {
 	if error != nil {
        // do nothing
 	}
-	var needforward = false
+	if !pb.isPrimary() {
+        pb.forward = false
+    }
 	if pb.isPrimary() && view.Backup != "" && pb.view.Backup != view.Backup {
-	    needforward = true
-	} 
-	pb.view = view
-	if needforward {
-	    pb.Forward(&ForwardArgs{Content:pb.content})
+	    pb.forward = true
+	}
+    pb.view = view
+	if pb.forward {
+        err := pb.ForwardAll(&ForwardArgs{Content:pb.content})
+        if err != nil {
+            fmt.Println("init backup failed")
+        } else {
+            pb.forward = false
+        }
 	}
     pb.mu.Unlock()
 }
@@ -174,6 +205,8 @@ func StartServer(vshost string, me string) *PBServer {
 	pb.vs = viewservice.MakeClerk(me, vshost)
 	// Your pb.* initializations here.
 	pb.content = map[string] string {}
+    pb.view = viewservice.View{}
+    pb.forward = false
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(pb)
