@@ -65,9 +65,9 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
     vs.mu.Lock()
     if vs.view.Primary == "" && vs.view.Viewnum == 0 { //new primary
         vs.view.Primary = name
-        vs.primaryAck = num
+        vs.primaryAck = 0
         vs.primaryTick = vs.currentTick
-        vs.view.Viewnum ++
+        vs.view.Viewnum = num + 1
     } else if name == vs.view.Primary { //ping from primary
         if num == 0 { //primary restart
             vs.ChangePrimary() 
@@ -83,12 +83,11 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
     } else if name == vs.view.Backup { //ping from backup
         if num == 0 { //backup restart
             if vs.isAcked() {
+                vs.view.Backup = name
                 vs.view.Viewnum++
-                vs.backupAck = num
                 vs.backupTick = vs.currentTick
             }
         } else {
-            vs.backupAck = num
             vs.backupTick = vs.currentTick
         }    
     }

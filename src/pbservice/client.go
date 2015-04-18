@@ -75,7 +75,7 @@ func call(srv string, rpcname string,
 func (ck *Clerk) Update() {
     view, err := ck.vs.Ping(ck.view.Viewnum)
     if err != nil {
-        fmt.Println("Client update fail")
+       // fmt.Println("Client update fail")
         return
     }
     ck.view = view
@@ -104,7 +104,6 @@ func (ck *Clerk) Get(key string) string {
         time.Sleep(viewservice.PingInterval)
         ck.Update()
     }
-	return "???"
 }
 
 //
