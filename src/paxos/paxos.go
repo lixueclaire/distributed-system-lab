@@ -64,7 +64,7 @@ type Paxos struct {
 type Instance struct {
     decided bool
     prepared string
-    accepted Proposal
+    result Proposal
 }
 
 type Proposal struct {
@@ -72,7 +72,7 @@ type Proposal struct {
     Value interface {}
 }
 
-type PaxosArg struct {
+type PaxosArgs struct {
     Seq int
     Number string
     Value interface{}
@@ -121,24 +121,19 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	return false
 }
     
-func (px *Paxos) CreateNumber() string {
-    now := time.Now()
-    dur := now.Sub(time.Date(2015, time.January, 1, 0, 0, 0, 0, time.UTC))
-    res := strconv.FormatInt(dur.Nanoseconds(), 10) + "_" + strconv.Itoa(px.me)
-    return res
+func (px *Paxos) Check(seq int) {
+    _, ok := px.instances[seq]
+    if !ok {
+        px.instances[seq] = &Instance {decided: false, prepared: "0", result: Proposal{Number: "0", Value: nil}}
+    }
 }
-    
-func (px *Paxos) CreateInstance(seq int) {
-   px.instances[seq] = &Instance {decided: false, prepared: "0", accepted: Proposal{Number: "0"}}
-}
-    
     
 func (px *Paxos) Prepare(seq int, v interface{}) (bool, Proposal) {
-    number := px.CreateNumber()
+    number := time.Now().String() + " " + strconv.Itoa(px.me)
     count := 0
     res := Proposal{Number: "0", Value: v}
     for i, acceptor := range px.peers {
-        arg := PaxosArg{Seq: seq, Number: number, Me: px.me}
+        arg := PaxosArgs{Seq: seq, Number: number}
         reply := PaxosReply{Ok: false}
         if i == px.me {
             px.ReceivePrepare(&arg, &reply)
@@ -156,18 +151,15 @@ func (px *Paxos) Prepare(seq int, v interface{}) (bool, Proposal) {
     return count > len(px.peers) / 2, res
 }
     
-func (px *Paxos) ReceivePrepare(arg *PaxosArg, reply *PaxosReply) error {
+func (px *Paxos) ReceivePrepare(arg *PaxosArgs, reply *PaxosReply) error {
     px.mu.Lock()
     defer px.mu.Unlock()
     seq := arg.Seq
     number := arg.Number
-    _, ok := px.instances[seq]
-    if !ok {
-         px.CreateInstance(seq)
-    }
+    px.Check(seq)
     if number > px.instances[seq].prepared {
         reply.Ok = true
-        reply.Reply = px.instances[seq].accepted
+        reply.Reply = px.instances[seq].result
         px.instances[seq].prepared = number
     }
     return nil
@@ -176,7 +168,7 @@ func (px *Paxos) ReceivePrepare(arg *PaxosArg, reply *PaxosReply) error {
 func (px *Paxos) Accept(seq int, proposal Proposal) bool {
     count := 0
     for i, acceptor := range px.peers {
-        arg := PaxosArg{Seq: seq, Number: proposal.Number, Value: proposal.Value, Me: px.me}
+        arg := PaxosArgs{Seq: seq, Number: proposal.Number, Value: proposal.Value}
         reply := PaxosReply{Ok: false}
         if i == px.me {
             px.ReceiveAccept(&arg, &reply)
@@ -190,28 +182,25 @@ func (px *Paxos) Accept(seq int, proposal Proposal) bool {
     return count > len(px.peers) / 2
 }
     
-func (px *Paxos) ReceiveAccept(arg *PaxosArg, reply *PaxosReply) error {
+func (px *Paxos) ReceiveAccept(arg *PaxosArgs, reply *PaxosReply) error {
     px.mu.Lock()
     defer px.mu.Unlock()
     seq := arg.Seq
     number := arg.Number
     value := arg.Value
-    _, ok := px.instances[seq]
-    if !ok {
-        px.CreateInstance(seq)
-    }
+    px.Check(seq)
     if number >= px.instances[seq].prepared {
         reply.Ok = true
         px.instances[seq].prepared = number
-        px.instances[seq].accepted.Number = number
-        px.instances[seq].accepted.Value = value
+        px.instances[seq].result.Number = number
+        px.instances[seq].result.Value = value
     }
     return nil
 }
     
 func (px *Paxos) Decide(seq int, proposal Proposal){
     for i, acceptor := range px.peers {
-        arg := PaxosArg{Seq: seq, Number: proposal.Number, Value:proposal.Value, Done: px.dones[px.me], Me: px.me}
+        arg := PaxosArgs{Seq: seq, Number: proposal.Number, Value:proposal.Value, Done: px.dones[px.me], Me: px.me}
         reply := PaxosReply{}
         if i == px.me {
             px.ReceiveDecide(&arg, &reply)
@@ -221,17 +210,14 @@ func (px *Paxos) Decide(seq int, proposal Proposal){
     }
 }
     
-func (px *Paxos) ReceiveDecide(arg *PaxosArg, reply *PaxosReply) error {
+func (px *Paxos) ReceiveDecide(arg *PaxosArgs, reply *PaxosReply) error {
     px.mu.Lock()
     defer px.mu.Unlock()
     seq := arg.Seq
-    _, ok := px.instances[seq]
-    if !ok {
-        px.CreateInstance(seq)
-    }
+    px.Check(seq)
     px.instances[seq].decided = true
-    px.instances[seq].accepted.Number = arg.Number
-    px.instances[seq].accepted.Value = arg.Value
+    px.instances[seq].result.Number = arg.Number
+    px.instances[seq].result.Value = arg.Value
     px.dones[arg.Me] = arg.Done
     return nil
 }
@@ -358,7 +344,7 @@ func (px *Paxos) Status(seq int) (Fate, interface{}) {
     defer  px.mu.Unlock()
     ins, ok := px.instances[seq]
     if ok && ins.decided {
-        return Decided, ins.accepted.Value
+        return Decided, ins.result.Value
     } else {
         return Pending, nil
     }
