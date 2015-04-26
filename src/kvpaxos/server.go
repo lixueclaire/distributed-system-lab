@@ -11,6 +11,7 @@ import "os"
 import "syscall"
 import "encoding/gob"
 import "math/rand"
+import "time"
 
 
 const Debug = 0
@@ -27,6 +28,11 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+    Type       string
+    Key        string
+    Value      string
+    Id         string
+    Client     string
 }
 
 type KVPaxos struct {
@@ -38,18 +44,73 @@ type KVPaxos struct {
 	px         *paxos.Paxos
 
 	// Your definitions here.
+    now        int
+    data       map[string] string
+    last       map[string] string
+}
+
+func (kv *KVPaxos) Wait(seq int) Op {
+    to := 10 * time.Millisecond
+    for {
+        status, value := kv.px.Status(seq)
+        if status == paxos.Decided{
+            return value.(Op)
+        }
+        time.Sleep(to)
+        if to < 10 * time.Second {
+            to *= 2
+        }
+    }
+}
+
+func (kv *KVPaxos) AddLog(op Op){
+    for {
+        seq := kv.now + 1
+        status, tmp := kv.px.Status(seq)
+        var res Op
+        if status == paxos.Decided {
+            res = tmp.(Op)
+        } else {
+            kv.px.Start(seq, op)
+            res = kv.Wait(seq)
+        }
+        kv.last[res.Client + res.Type] = res.Id
+        if res.Type == "Put" {
+            kv.data[res.Key] = res.Value
+        }
+        if res.Type == "Append" {
+            kv.data[res.Key] += res.Value
+        }
+        kv.px.Done(seq)
+        kv.now ++
+        if res.Id == op.Id {
+            return
+        }
+    }
 }
 
 
 func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
-	return nil
+    kv.mu.Lock()
+    defer kv.mu.Unlock()
+    if kv.last[args.Me + "Get"] != args.Id {
+        op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me}
+        kv.AddLog(op)
+    }
+    reply.Value = kv.data[args.Key]
+    return nil
 }
 
 func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
-
-	return nil
+    kv.mu.Lock()
+    defer kv.mu.Unlock()
+    if kv.last[args.Me + args.Op] != args.Id {
+        op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me}
+        kv.AddLog(op)
+    }
+    return nil
 }
 
 // tell the server to shut itself down.
@@ -93,6 +154,9 @@ func StartServer(servers []string, me int) *KVPaxos {
 	kv.me = me
 
 	// Your initialization code here.
+    kv.now = 0
+    kv.data = map[string] string{}
+    kv.last = map[string] string{}
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)
