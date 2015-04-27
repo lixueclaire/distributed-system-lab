@@ -64,16 +64,14 @@ func (kv *KVPaxos) Wait(seq int) Op {
 }
 
 func (kv *KVPaxos) AddLog(op Op){
+    tmp, ok := kv.last[op.Client + op.Type]
+    if ok && tmp >= op.Id {
+        return
+    }
     for {
         seq := kv.now + 1
-        status, tmp := kv.px.Status(seq)
-        var res Op
-        if status == paxos.Decided {
-            res = tmp.(Op)
-        } else {
-            kv.px.Start(seq, op)
-            res = kv.Wait(seq)
-        }
+        kv.px.Start(seq, op)
+        res := kv.Wait(seq)
         kv.last[res.Client + res.Type] = res.Id
         if res.Type == "Put" {
             kv.data[res.Key] = res.Value
@@ -94,10 +92,8 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
     kv.mu.Lock()
     defer kv.mu.Unlock()
-    if kv.last[args.Me + "Get"] != args.Id {
-        op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me}
-        kv.AddLog(op)
-    }
+    op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me}
+    kv.AddLog(op)
     reply.Value = kv.data[args.Key]
     return nil
 }
@@ -106,10 +102,8 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
     kv.mu.Lock()
     defer kv.mu.Unlock()
-    if kv.last[args.Me + args.Op] != args.Id {
-        op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me}
-        kv.AddLog(op)
-    }
+    op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me}
+    kv.AddLog(op)
     return nil
 }
 
