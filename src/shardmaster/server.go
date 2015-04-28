@@ -12,6 +12,7 @@ import "os"
 import "syscall"
 import "encoding/gob"
 import "math/rand"
+import "time"
 
 type ShardMaster struct {
 	mu         sync.Mutex
@@ -22,35 +23,228 @@ type ShardMaster struct {
 	px         *paxos.Paxos
 
 	configs []Config // indexed by config num
+    now        int   // max seq number
+    max        int   // max config number
 }
 
 
 type Op struct {
 	// Your data here.
+    Type string
+    GID  int64
+    Servers []string
+    Shard int
+    Num  int
+    Mark   int64
+}
+
+func (sm *ShardMaster) Wait(seq int) Op {
+    to := 10 * time.Millisecond
+    for {
+        status, value := sm.px.Status(seq)
+        if status == paxos.Decided {
+            return value.(Op)
+        }
+        time.Sleep(to)
+        if to < 10 * time.Second {
+            to *= 2
+        }
+    }
+}
+    
+func (sm *ShardMaster) MakeConfig() *Config {
+    config := Config{Num: sm.max + 1, Shards: [NShards]int64{}, Groups: map[int64][]string{}}
+    for shard, gid := range sm.configs[sm.max].Shards {
+        config.Shards[shard] = gid
+    }
+    for gid, servers := range sm.configs[sm.max].Groups {
+        config.Groups[gid] = servers
+    }
+    sm.configs = append(sm.configs, config)
+    sm.max ++
+    return &sm.configs[sm.max]
+    
+}
+    
+func (sm *ShardMaster) DoJoin(op Op) {
+    config := sm.MakeConfig()
+    gid := op.GID
+    _, ok := config.Groups[gid]
+    if ok {
+        return
+    }
+    config.Groups[gid] = op.Servers
+    if len(config.Groups) == 1 {
+        for i := 0; i < len(config.Shards); i++ {
+            config.Shards[i] = gid
+        }
+        return
+    }
+    left := len(config.Shards) / len(config.Groups)
+    k := left / (len(config.Groups) - 1)
+    max := len(config.Shards) / (len(config.Groups) - 1)
+    if len(config.Shards) % (len(config.Groups) - 1) != 0 {
+        max ++
+    }
+    counts := map[int64] int{}
+    move := map[int64] int{}
+    for _, g := range config.Shards {
+        counts[g] ++
+    }
+    for i, g := range config.Shards {
+        if move[g] < k {
+            move[g] ++
+            config.Shards[i] = gid
+            left --
+        }
+    }
+    for i, g := range config.Shards {
+        if left == 0 {
+            break
+        }
+        if g != gid && counts[g] == max {
+            move[g] ++
+            config.Shards[i] = gid
+            left --
+        }
+    }
+    for i, g := range config.Shards {
+        if left == 0 {
+            break
+        }
+        if g != gid {
+            move[g] ++
+            config.Shards[i] = gid
+            left --
+        }
+    }
+}
+    
+func (sm *ShardMaster) DoLeave(op Op) {
+    config := sm.MakeConfig()
+    gid := op.GID
+    _, ok := config.Groups[gid]
+    if !ok {
+        return
+    }
+    delete(config.Groups, gid)
+    cnt := 0
+    counts := map[int64] int{}
+    for _, g := range config.Shards {
+        counts[g] ++
+        if g == gid {
+            cnt ++
+        }
+    }
+    k := cnt / len(config.Groups)
+    min := len(config.Shards) / (len(config.Groups) + 1)
+    p := 0
+    for g, _ := range config.Groups {
+        for i := 0; i < k; i++ {
+            for config.Shards[p] != gid {
+                p++
+            }
+            cnt --
+            config.Shards[p] = g
+        }
+    }
+    for g, _ := range config.Groups {
+        if cnt == 0 {
+            break
+        }
+        if counts[g] != min {
+            continue
+        }
+        for config.Shards[p] != gid {
+            p++
+        }
+        cnt --
+        config.Shards[p] = g
+    }
+    for g, _ := range config.Groups {
+        if cnt == 0 {
+            break
+        }
+        for config.Shards[p] != gid {
+            p++
+        }
+        cnt --
+        config.Shards[p] = g
+    }
+}
+    
+func (sm *ShardMaster) DoMove(op Op) {
+    config := sm.MakeConfig()
+    config.Shards[op.Shard] = op.GID
+}
+    
+func (sm *ShardMaster) DoQuery(op Op) Config{
+    if op.Num == -1 || op.Num > sm.max {
+        return sm.configs[sm.max]
+    } else {
+        return sm.configs[op.Num]
+    }
+}
+
+func (sm *ShardMaster) AddLog(op Op) {
+    for {
+        seq := sm.now + 1
+        sm.px.Start(seq, op)
+        res:= sm.Wait(seq)
+        if res.Type == "Join" {
+            sm.DoJoin(res)
+        } else if res.Type == "Leave" {
+            sm.DoLeave(res)
+        } else if res.Type == "Move" {
+            sm.DoMove(res)
+        } else if res.Type == "Query" {
+            //sm.DoQuery(res)
+        } else {
+            fmt.Println("unknown operation")
+        }
+        sm.px.Done(seq)
+        sm.now ++
+        if res.Mark == op.Mark {
+            return
+        }
+    }
 }
 
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 	// Your code here.
-
+    sm.mu.Lock()
+    defer sm.mu.Unlock()
+    op := Op{Type: "Join", GID: args.GID, Servers: args.Servers, Mark: rand.Int63()}
+    sm.AddLog(op)
 	return nil
 }
 
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	// Your code here.
-
+    sm.mu.Lock()
+    defer sm.mu.Unlock()
+    op := Op{Type: "Leave", GID: args.GID, Mark: rand.Int63()}
+    sm.AddLog(op)
 	return nil
 }
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 	// Your code here.
-
+    sm.mu.Lock()
+    defer sm.mu.Unlock()
+    op := Op{Type: "Move", GID: args.GID, Shard: args.Shard, Mark: rand.Int63()}
+    sm.AddLog(op)
 	return nil
 }
 
 func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	// Your code here.
-
+    sm.mu.Lock()
+    defer sm.mu.Unlock()
+    op := Op{Type: "Query", Num: args.Num, Mark: rand.Int63()}
+    sm.AddLog(op)
+    reply.Config = sm.DoQuery(op)
 	return nil
 }
 
@@ -90,6 +284,8 @@ func StartServer(servers []string, me int) *ShardMaster {
 
 	sm.configs = make([]Config, 1)
 	sm.configs[0].Groups = map[int64][]string{}
+    sm.max = 0
+    sm.now = 0
 
 	rpcs := rpc.NewServer()
 
