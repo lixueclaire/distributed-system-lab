@@ -13,6 +13,7 @@ const (
 	OK            = "OK"
 	ErrNoKey      = "ErrNoKey"
 	ErrWrongGroup = "ErrWrongGroup"
+    ErrBehindConfig = "ErrBehindConfig"
 )
 
 type Err string
@@ -24,6 +25,8 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+    Me    string
+    Id    string
 
 }
 
@@ -34,10 +37,23 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+    Me  string
+    Id  string
 }
 
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+type GetDataArgs struct {
+    Shard  int
+    Num    int //Config Num
+}
+
+type GetDataReply struct {
+    Err Err
+    Data map[string] string
+    Last map[string] string
 }
 

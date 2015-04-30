@@ -7,12 +7,14 @@ import "sync"
 import "fmt"
 import "crypto/rand"
 import "math/big"
+import "strconv"
 
 type Clerk struct {
 	mu     sync.Mutex // one RPC at a time
 	sm     *shardmaster.Clerk
 	config shardmaster.Config
 	// You'll have to modify Clerk.
+    me     string
 }
 
 func nrand() int64 {
@@ -26,6 +28,7 @@ func MakeClerk(shardmasters []string) *Clerk {
 	ck := new(Clerk)
 	ck.sm = shardmaster.MakeClerk(shardmasters)
 	// You'll have to modify MakeClerk.
+    ck.me = strconv.FormatInt(nrand(), 10)
 	return ck
 }
 
@@ -98,9 +101,10 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &GetArgs{}
+				args := &GetArgs{Me: ck.me, Id: time.Now().String()}
 				args.Key = key
 				var reply GetReply
+                reply.Err = OK
 				ok := call(srv, "ShardKV.Get", args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 					return reply.Value
@@ -136,11 +140,12 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &PutAppendArgs{}
+				args := &PutAppendArgs{Me: ck.me, Id: time.Now().String()}
 				args.Key = key
 				args.Value = value
 				args.Op = op
 				var reply PutAppendReply
+                reply.Err = OK
 				ok := call(srv, "ShardKV.PutAppend", args, &reply)
 				if ok && reply.Err == OK {
 					return
