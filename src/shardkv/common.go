@@ -27,6 +27,7 @@ type PutAppendArgs struct {
 	// otherwise RPC will break.
     Me    string
     Id    string
+    Num   int //Config Num
 
 }
 
@@ -39,6 +40,7 @@ type GetArgs struct {
 	// You'll have to add definitions here.
     Me  string
     Id  string
+    Num int //Config Num
 }
 
 type GetReply struct {
@@ -46,12 +48,12 @@ type GetReply struct {
 	Value string
 }
 
-type GetDataArgs struct {
+type TranDataArgs struct {
     Shard  int
     Num    int //Config Num
 }
 
-type GetDataReply struct {
+type TranDataReply struct {
     Err Err
     Data map[string] string
     Last map[string] string

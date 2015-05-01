@@ -101,12 +101,13 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &GetArgs{Me: ck.me, Id: time.Now().String()}
+				args := &GetArgs{Me: ck.me, Id: time.Now().String(), Num: ck.config.Num}
 				args.Key = key
 				var reply GetReply
                 reply.Err = OK
 				ok := call(srv, "ShardKV.Get", args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+				    //fmt.Println("Get", key, reply.Value, ck.config.Num)
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
@@ -140,7 +141,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &PutAppendArgs{Me: ck.me, Id: time.Now().String()}
+				args := &PutAppendArgs{Me: ck.me, Id: time.Now().String(), Num: ck.config.Num}
 				args.Key = key
 				args.Value = value
 				args.Op = op
@@ -148,6 +149,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
                 reply.Err = OK
 				ok := call(srv, "ShardKV.PutAppend", args, &reply)
 				if ok && reply.Err == OK {
+				    //fmt.Println("Put", "[", key, value, "]",ck.config.Num)
 					return
 				}
 				if ok && (reply.Err == ErrWrongGroup) {

@@ -33,7 +33,7 @@ type Op struct {
     Id         string
     Client     string
     Config     shardmaster.Config //for reconfiguration
-    NewData    GetDataReply //for reconfiguration
+    NewData    TranDataReply //for reconfiguration
     Mark       int64
 }
 
@@ -72,12 +72,12 @@ func (kv *ShardKV) Wait(seq int) Op {
 
 func (kv *ShardKV) AddLog(op Op){
     for {
+        //must check every time
         if op.Type == "Reconfiguration" {
             if op.Config.Num <= kv.config.Num {
                 return
             }
-        } else if op.Type == "GetData" {
-            
+        } else if op.Type == "TranData" {
         } else {
             t, ok := kv.last[op.Client + op.Type]
             if (ok && t >= op.Id) || kv.config.Shards[key2shard(op.Key)] != kv.gid{
@@ -88,41 +88,30 @@ func (kv *ShardKV) AddLog(op Op){
         kv.px.Start(seq, op)
         res := kv.Wait(seq)
         if res.Type == "Put" {
-            t, ok := kv.last[res.Client + res.Type]
-            if !(ok && t >= res.Id) && kv.config.Shards[key2shard(res.Key)] == kv.gid {
-                kv.data[res.Key] = res.Value
-                kv.last[res.Client + res.Type] = res.Id
-            }
+            kv.data[res.Key] = res.Value
+            kv.last[res.Client + res.Type] = res.Id
         } else if res.Type == "Append" {
-            t, ok := kv.last[res.Client + res.Type]
-            if !(ok && t >= res.Id) && kv.config.Shards[key2shard(res.Key)] == kv.gid {
-                //tt := kv.data[res.Key]
-                kv.data[res.Key] += res.Value
-                kv.last[res.Client + res.Type] = res.Id
-                //fmt.Println(kv.me, res.Type, res.Key, res.Value, tt, kv.data[res.Key], res.Id, t, kv.last[res.Client + res.Type])
-                
-            }
+            //fmt.Println("Append", kv.gid, kv.me, res.Key, res.Value, kv.data[res.Key]+res.Value)
+            kv.data[res.Key] += res.Value
+            kv.last[res.Client + res.Type] = res.Id
         } else if res.Type == "Get" {
-            t, ok := kv.last[res.Client + res.Type]
-            if !(ok && t >= res.Id) && kv.config.Shards[key2shard(res.Key)] == kv.gid {
-                kv.last[res.Client + res.Type] = res.Id
-                //fmt.Println(kv.me, res.Type, res.Key, kv.data[res.Key])
-            }
+            //fmt.Println("Get", kv.gid, kv.me, res.Key, kv.data[res.Key])
+            kv.last[res.Client + res.Type] = res.Id
         } else if res.Type == "Reconfiguration" {
-            if res.Config.Num > kv.config.Num {
-                for key, value := range res.NewData.Data {
-                    kv.data[key] = value
-                }
-                for key, value := range res.NewData.Last {
-                    t, ok := kv.last[key]
-                    if !(ok && t >= value) {
-                        kv.last[key] = value
-                    }
-                }
-                kv.config = res.Config
+            //fmt.Println("------", kv.gid, kv.me, kv.config.Num, res.Config.Num)
+            for key, value := range res.NewData.Data {
+                //fmt.Println(kv.config.Shards[key2shard(key)], res.Config.Shards[key2shard(key)], key, "old", kv.data[key], "new", value)
+                kv.data[key] = value
             }
+            for key, value := range res.NewData.Last {
+                t, ok := kv.last[key]
+                if !(ok && t >= value) {
+                    kv.last[key] = value
+                }
+            }
+            kv.config = res.Config
         } else {
-           //GetData
+           //TranData
         }
         kv.px.Done(seq)
         kv.now ++
@@ -135,6 +124,10 @@ func (kv *ShardKV) AddLog(op Op){
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
+	if args.Num > kv.config.Num {
+        reply.Err = ErrBehindConfig
+        return nil
+    }
     kv.mu.Lock()
     defer kv.mu.Unlock()
     op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me, Mark: rand.Int63()}
@@ -150,12 +143,17 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
     } else {
         reply.Value = tmp
     }
+    //fmt.Println("Re Get", kv.gid, kv.me, kv.config.Num)
 	return nil
 }
 
 // RPC handler for client Put and Append requests
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
+	if args.Num > kv.config.Num {
+        reply.Err = ErrBehindConfig
+        return nil
+    }
     kv.mu.Lock()
     defer kv.mu.Unlock()
     op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me, Mark: rand.Int63()}
@@ -165,18 +163,23 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
         reply.Err = ErrWrongGroup
         return nil
     }
+    //fmt.Println("Re Put", kv.gid, kv.me, "[", args.Key, kv.data[args.Key], "]", kv.config.Num)
 	return nil
 }
 
-func (kv *ShardKV) GetData(args *GetDataArgs, reply *GetDataReply) error {
+func (kv *ShardKV) TranData(args *TranDataArgs, reply *TranDataReply) error {
     if args.Num > kv.config.Num {
         reply.Err = ErrBehindConfig
         return nil
     }
     kv.mu.Lock()
     defer kv.mu.Unlock()
-    op := Op{Type: "GetData", Mark: rand.Int63()}
-    kv.AddLog(op)
+    op := Op{Type: "TranData", Mark: rand.Int63()}
+    kv.AddLog(op) //it's necessary
+    if args.Num > kv.config.Num {
+        reply.Err = ErrBehindConfig
+        return nil
+    }
     shard := args.Shard
     reply.Data = map[string] string{}
     reply.Last = map[string] string{}
@@ -191,38 +194,38 @@ func (kv *ShardKV) GetData(args *GetDataArgs, reply *GetDataReply) error {
     return nil
 }
 
-func (kv *ShardKV) Add(res *GetDataReply, tmp *GetDataReply) {
-    for key, value := range tmp.Data {
-        res.Data[key] = value
-    }
-    for key, value := range tmp.Last {
-        t, ok := res.Last[key]
-        if !(ok && t >= value) {
-            res.Last[key] = value
-        }
-    }
-}
-
 func (kv *ShardKV) Reconfiguration(new shardmaster.Config) bool {
-    newdata := GetDataReply{Err: OK, Data: map[string] string{}, Last: map[string] string{}}
+    newdata := TranDataReply{Err: OK, Data: map[string] string{}, Last: map[string] string{}}
     old := &kv.config
     for shard, oldg := range old.Shards {
         newg := new.Shards[shard]
         if newg != oldg && newg == kv.gid {
+            flag := false
             for _, server := range old.Groups[oldg] {
-                args := GetDataArgs{Shard: shard, Num: old.Num}
-                reply := GetDataReply{Err: OK}
-                ok := call(server, "ShardKV.GetData", &args, &reply)
-                if ok && reply.Err != OK {
-                    return false
-                }
-                if ok && reply.Err == OK{
-                    kv.Add(&newdata, &reply)
+                args := TranDataArgs{Shard: shard, Num: old.Num}
+                reply := TranDataReply{Err: OK}
+                ok := call(server, "ShardKV.TranData", &args, &reply)
+                if ok && reply.Err == OK {
+                     for key, value := range reply.Data {
+                        newdata.Data[key] = value
+                     }
+                     for key, value := range reply.Last {
+                         t, ok := newdata.Last[key]
+                         if !(ok && t >= value) {
+                            newdata.Last[key] = value
+                         }
+                    }
+                    flag = true
                     break
                 }
             }
+            if flag == false && oldg > 0 {
+                //fmt.Println("Reconfig---false", kv.gid, kv.me, new.Num, kv.config.Num)
+                return false
+            }
         }
     }
+    //fmt.Println("Reconfig", kv.gid, kv.me, new.Num, kv.config.Num)
     op := Op{Type: "Reconfiguration", Config: new, NewData: newdata, Mark: rand.Int63()}
     kv.AddLog(op)
     return true
@@ -235,11 +238,12 @@ func (kv *ShardKV) Reconfiguration(new shardmaster.Config) bool {
 func (kv *ShardKV) tick() {
     kv.mu.Lock()
     defer kv.mu.Unlock()
+    oldnum := kv.config.Num
     newnum := kv.sm.Query(-1).Num
-    for i := kv.config.Num + 1; i <= newnum; i++ {
-        config := kv.sm.Query(i)
+    for num := oldnum + 1; num <= newnum; num++ {
+        config := kv.sm.Query(num)
         if kv.Reconfiguration(config) == false {
-            break
+            return
         }
     }
 }
