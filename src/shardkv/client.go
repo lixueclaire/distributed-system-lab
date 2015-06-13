@@ -90,6 +90,8 @@ func (ck *Clerk) Get(key string) string {
 	defer ck.mu.Unlock()
 
 	// You'll have to modify Get().
+	
+	tt := time.Now().String();
 
 	for {
 		shard := key2shard(key)
@@ -101,7 +103,7 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &GetArgs{Me: ck.me, Id: time.Now().String(), Num: ck.config.Num}
+				args := &GetArgs{Me: ck.me, Id: tt, Num: ck.config.Num}
 				args.Key = key
 				var reply GetReply
                 reply.Err = OK
@@ -130,6 +132,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	defer ck.mu.Unlock()
 
 	// You'll have to modify PutAppend().
+	
+	tt := time.Now().String();
 
 	for {
 		shard := key2shard(key)
@@ -141,7 +145,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &PutAppendArgs{Me: ck.me, Id: time.Now().String(), Num: ck.config.Num}
+				args := &PutAppendArgs{Me: ck.me, Id: tt, Num: ck.config.Num}
 				args.Key = key
 				args.Value = value
 				args.Op = op

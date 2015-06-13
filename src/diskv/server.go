@@ -92,14 +92,16 @@ func (kv *DisKV) AddLog(op Op){
         kv.px.Start(seq, op)
         res := kv.Wait(seq)
         if res.Type == "Put" {
+			//fmt.Println("Put", kv.gid, kv.me, res.Key, op.Key, res.Mark, op.Mark);
+			//fmt.Println("Put", kv.gid, kv.me, res.Key, res.Value)
             kv.data[res.Key] = res.Value
             kv.last[res.Client + res.Type] = res.Id
         } else if res.Type == "Append" {
             //fmt.Println("Append", kv.gid, kv.me, res.Key, res.Value, kv.data[res.Key]+res.Value)
-            kv.data[res.Key] += res.Value
+			kv.data[res.Key] += res.Value
             kv.last[res.Client + res.Type] = res.Id
         } else if res.Type == "Get" {
-            //fmt.Println("Get", kv.gid, kv.me, res.Key, kv.data[res.Key])
+			//fmt.Println("Get", kv.gid, kv.me, res.Key, kv.data[res.Key], kv.config.Num)
             kv.last[res.Client + res.Type] = res.Id
         } else if res.Type == "Reconfiguration" {
             //fmt.Println("------", kv.gid, kv.me, kv.config.Num, res.Config.Num)
@@ -225,7 +227,7 @@ func (kv *DisKV) Get(args *GetArgs, reply *GetReply) error {
     }
     kv.mu.Lock()
     defer kv.mu.Unlock()
-    op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me, Mark: rand.Int63()}
+    op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me, Mark: rand.Int63() }
     kv.AddLog(op)
     shard := key2shard(args.Key)
     if kv.gid != kv.config.Shards[shard] {
@@ -250,7 +252,8 @@ func (kv *DisKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
     }
     kv.mu.Lock()
     defer kv.mu.Unlock()
-    op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me, Mark: rand.Int63()}
+    op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me, Mark: rand.Int63() + int64(kv.me)}
+	//fmt.Println("PP", args.Key, args.Value);
     kv.AddLog(op)
     shard := key2shard(args.Key)
     if kv.gid != kv.config.Shards[shard] {
