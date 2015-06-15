@@ -136,7 +136,19 @@ func (sm *ShardMaster) DoLeave(op Op) {
             cnt ++
         }
     }
-    k := cnt / len(config.Groups)
+	for i, _ := range config.Shards {
+		if (config.Shards[i] == gid) {
+			var newg int64 = -1
+			for g, _ := range config.Groups {
+				if newg == -1 || counts[g] < counts[newg] {
+					newg = g
+				}
+			}
+			config.Shards[i] = newg
+			counts[newg]++
+		}
+	}
+    /*k := cnt / len(config.Groups)
     min := len(config.Shards) / (len(config.Groups) + 1)
     p := 0
     for g, _ := range config.Groups {
@@ -170,7 +182,7 @@ func (sm *ShardMaster) DoLeave(op Op) {
         }
         cnt --
         config.Shards[p] = g
-    }
+    }*/
 }
     
 func (sm *ShardMaster) DoMove(op Op) {
