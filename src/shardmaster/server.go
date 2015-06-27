@@ -80,44 +80,34 @@ func (sm *ShardMaster) DoJoin(op Op) {
         }
         return
     }
-    left := len(config.Shards) / len(config.Groups)
-    k := left / (len(config.Groups) - 1)
-    max := len(config.Shards) / (len(config.Groups) - 1)
-    if len(config.Shards) % (len(config.Groups) - 1) != 0 {
-        max ++
-    }
-    counts := map[int64] int{}
-    move := map[int64] int{}
+	
+	counts := map[int64] int{}
     for _, g := range config.Shards {
         counts[g] ++
     }
-    for i, g := range config.Shards {
-        if move[g] < k {
-            move[g] ++
-            config.Shards[i] = gid
-            left --
+	for {
+		var ming int64 = -1
+		var maxg int64 = -1
+		for g, _ := range config.Groups {
+			if ming == -1 || counts[g] < counts[ming] {
+				ming = g
+			}
+			if maxg == -1 || counts[g] > counts[maxg] {
+				maxg = g
+			}
+		}
+		if counts[maxg] - counts[ming] <= 1 {
+			break
+		}
+		for i := 0; i < len(config.Shards); i++ {
+            if config.Shards[i] == maxg {
+				config.Shards[i] = ming
+				break
+			}
         }
-    }
-    for i, g := range config.Shards {
-        if left == 0 {
-            break
-        }
-        if g != gid && counts[g] == max {
-            move[g] ++
-            config.Shards[i] = gid
-            left --
-        }
-    }
-    for i, g := range config.Shards {
-        if left == 0 {
-            break
-        }
-        if g != gid {
-            move[g] ++
-            config.Shards[i] = gid
-            left --
-        }
-    }
+		counts[maxg]--
+		counts[ming]++
+	}
 }
     
 func (sm *ShardMaster) DoLeave(op Op) {
@@ -128,13 +118,9 @@ func (sm *ShardMaster) DoLeave(op Op) {
         return
     }
     delete(config.Groups, gid)
-    cnt := 0
     counts := map[int64] int{}
     for _, g := range config.Shards {
         counts[g] ++
-        if g == gid {
-            cnt ++
-        }
     }
 	for i, _ := range config.Shards {
 		if (config.Shards[i] == gid) {
@@ -148,41 +134,30 @@ func (sm *ShardMaster) DoLeave(op Op) {
 			counts[newg]++
 		}
 	}
-    /*k := cnt / len(config.Groups)
-    min := len(config.Shards) / (len(config.Groups) + 1)
-    p := 0
-    for g, _ := range config.Groups {
-        for i := 0; i < k; i++ {
-            for config.Shards[p] != gid {
-                p++
-            }
-            cnt --
-            config.Shards[p] = g
+	
+	for {
+		var ming int64 = -1
+		var maxg int64 = -1
+		for g, _ := range config.Groups {
+			if ming == -1 || counts[g] < counts[ming] {
+				ming = g
+			}
+			if maxg == -1 || counts[g] > counts[maxg] {
+				maxg = g
+			}
+		}
+		if counts[maxg] - counts[ming] <= 1 {
+			break
+		}
+		for i := 0; i < len(config.Shards); i++ {
+            if config.Shards[i] == maxg {
+				config.Shards[i] = ming
+				break
+			}
         }
-    }
-    for g, _ := range config.Groups {
-        if cnt == 0 {
-            break
-        }
-        if counts[g] != min {
-            continue
-        }
-        for config.Shards[p] != gid {
-            p++
-        }
-        cnt --
-        config.Shards[p] = g
-    }
-    for g, _ := range config.Groups {
-        if cnt == 0 {
-            break
-        }
-        for config.Shards[p] != gid {
-            p++
-        }
-        cnt --
-        config.Shards[p] = g
-    }*/
+		counts[maxg]--
+		counts[ming]++
+	}
 }
     
 func (sm *ShardMaster) DoMove(op Op) {

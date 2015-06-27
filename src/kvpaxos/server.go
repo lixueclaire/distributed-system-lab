@@ -33,6 +33,7 @@ type Op struct {
     Value      string
     Id         string
     Client     string
+	Mark       int64
 }
 
 type KVPaxos struct {
@@ -64,25 +65,29 @@ func (kv *KVPaxos) Wait(seq int) Op {
 }
 
 func (kv *KVPaxos) AddLog(op Op){
-    tmp, ok := kv.last[op.Client + op.Type]
-    if ok && tmp >= op.Id {
-        return
-    }
     for {
+		//tmp, ok := kv.last[op.Client + op.Type]
+		tmp, ok := kv.last[op.Client]
+		if ok && tmp >= op.Id {
+			return
+		}
         seq := kv.now + 1
         kv.px.Start(seq, op)
         res := kv.Wait(seq)
-        kv.last[res.Client + res.Type] = res.Id
+		//fmt.Println(kv.me, op.Type, op.Client, op.Id, op.Key, op.Value)
+		//fmt.Println(kv.me, res.Type, res.Client, res.Id, res.Key, res.Value)
+        //kv.last[res.Client + res.Type] = res.Id
+		kv.last[res.Client] = res.Id
         if res.Type == "Put" {
             kv.data[res.Key] = res.Value
         }
         if res.Type == "Append" {
-            kv.data[res.Key] += res.Value
+			kv.data[res.Key] += res.Value
         }
         kv.px.Done(seq)
         kv.now ++
-        if res.Id == op.Id {
-            return
+		if res.Mark == op.Mark {
+		   return
         }
     }
 }
@@ -92,7 +97,7 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
     kv.mu.Lock()
     defer kv.mu.Unlock()
-    op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me}
+    op := Op{Type: "Get", Key: args.Key, Id: args.Id, Client: args.Me, Mark: rand.Int63()}
     kv.AddLog(op)
     reply.Value = kv.data[args.Key]
     return nil
@@ -102,7 +107,7 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
     kv.mu.Lock()
     defer kv.mu.Unlock()
-    op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me}
+    op := Op{Type: args.Op, Key: args.Key, Value: args.Value, Id: args.Id, Client: args.Me, Mark: rand.Int63()}
     kv.AddLog(op)
     return nil
 }
