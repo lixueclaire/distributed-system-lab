@@ -66,8 +66,7 @@ func (kv *KVPaxos) Wait(seq int) Op {
 
 func (kv *KVPaxos) AddLog(op Op){
     for {
-		//tmp, ok := kv.last[op.Client + op.Type]
-		tmp, ok := kv.last[op.Client]
+		tmp, ok := kv.last[op.Client + op.Type]
 		if ok && tmp >= op.Id {
 			return
 		}
@@ -76,14 +75,18 @@ func (kv *KVPaxos) AddLog(op Op){
         res := kv.Wait(seq)
 		//fmt.Println(kv.me, op.Type, op.Client, op.Id, op.Key, op.Value)
 		//fmt.Println(kv.me, res.Type, res.Client, res.Id, res.Key, res.Value)
-        //kv.last[res.Client + res.Type] = res.Id
-		kv.last[res.Client] = res.Id
         if res.Type == "Put" {
             kv.data[res.Key] = res.Value
         }
         if res.Type == "Append" {
-			kv.data[res.Key] += res.Value
+			tmp, ok := kv.last[res.Client + res.Type]
+			if ok && tmp >= res.Id {
+				
+			} else {
+				kv.data[res.Key] += res.Value
+			}
         }
+		kv.last[res.Client + res.Type] = res.Id
         kv.px.Done(seq)
         kv.now ++
 		if res.Mark == op.Mark {
